@@ -18,7 +18,7 @@ struct Gyroscope {
   int address;
   int temp;
   bool calibrated;
-};// __attribute__((packed));
+};
 
 inline void enableGyro(const struct Gyroscope* gyro) {
   Wire.beginTransmission(gyro->address);
@@ -71,9 +71,6 @@ inline void readGyroValues(struct Gyroscope* gyro) {
     gyro->roll  -= gyro->roll_cal;
     gyro->pitch -= gyro->pitch_cal;
     gyro->yaw   += gyro->yaw_cal;
-    // gyro->acc.x -= gyro->acc.x_cal;
-    // gyro->acc.y -= gyro->acc.y_cal;
-    // gyro->acc.z -= gyro->acc.z_cal;
   }
 }
 
@@ -87,18 +84,12 @@ inline void calibrateGyro(struct Gyroscope* gyro) {
     gyro->roll_cal  += gyro->roll;
     gyro->pitch_cal += gyro->pitch;
     gyro->yaw_cal   += gyro->yaw;
-    gyro->acc.x_cal += gyro->acc.x;
-    gyro->acc.y_cal += gyro->acc.y;
-    gyro->acc.z_cal += gyro->acc.z;
     delay(4);
   }
 
   gyro->roll_cal  /= GYRO_CALIBRATIONS;
   gyro->pitch_cal /= GYRO_CALIBRATIONS;
   gyro->yaw_cal   /= GYRO_CALIBRATIONS;
-  gyro->acc.x_cal /= GYRO_CALIBRATIONS;
-  gyro->acc.y_cal /= GYRO_CALIBRATIONS;
-  gyro->acc.z_cal /= GYRO_CALIBRATIONS;
   gyro->calibrated = true;
 }
 
