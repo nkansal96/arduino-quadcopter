@@ -4,15 +4,11 @@
 #include <Wire.h>
 #include <EEPROM.h>
 
-// number of calibration iterations to perform
-const int GYRO_CALIBRATIONS = 10000;
+const int GYRO_CALIBRATIONS = 4000; // number of calibration iterations to perform
+const int GYRO_ADDR = 0b1101000;    // I2C slave address of the gyroscope
 
-// I2C slave address of the gyroscope
-const int GYRO_ADDR = 0b1101000;
-
-// Gyro values
 struct Gyroscope {
-  struct { double x, y, z, x_cal, y_cal, z_cal; } acc;
+  struct { double x, y, z; } acc;
   double roll, pitch, yaw;
   double roll_cal, pitch_cal, yaw_cal;
   int address;
@@ -55,69 +51,41 @@ inline void readGyroValues(struct Gyroscope* gyro) {
   while (Wire.available() < 14);  // wait while data is loading
 
   // read acceleration data
-  gyro->acc.x = ((Wire.read() << 8) | Wire.read()); // negate due to gyro mounted incorrectly
+  gyro->acc.x = ((Wire.read() << 8) | Wire.read());
   gyro->acc.y = ((Wire.read() << 8) | Wire.read());
   gyro->acc.z = ((Wire.read() << 8) | Wire.read());
-
-  gyro->temp = (Wire.read() << 8) | Wire.read();
+  gyro->temp = ((Wire.read() << 8) | Wire.read());
 
   // read gyro data
-  // read pitch first due to gyro mounted incorrectly
-  gyro->pitch = ((Wire.read() << 8) | Wire.read());
+  gyro->pitch = ((Wire.read() << 8) | Wire.read()); // read pitch first
   gyro->roll = ((Wire.read() << 8) | Wire.read());
-  gyro->yaw = -((Wire.read() << 8) | Wire.read()); // negate due to gyro mounted incorrectly
+  gyro->yaw = ((Wire.read() << 8) | Wire.read()); 
 
   if (gyro->calibrated) {
     gyro->roll  -= gyro->roll_cal;
     gyro->pitch -= gyro->pitch_cal;
-    gyro->yaw   += gyro->yaw_cal;
-  }
-}
-
-inline void calibrateGyro(struct Gyroscope* gyro) {
-  gyro->calibrated = false;
-  Serial.print("Calibrating...");
-  for (int i = 0; i < GYRO_CALIBRATIONS; i++) {
-    if (i % 100 == 0)
-      Serial.print(".");
-    readGyroValues(gyro);
-    gyro->roll_cal  += gyro->roll;
-    gyro->pitch_cal += gyro->pitch;
-    gyro->yaw_cal   += gyro->yaw;
-    delay(4);
+    gyro->yaw   -= gyro->yaw_cal;
   }
 
-  gyro->roll_cal  /= GYRO_CALIBRATIONS;
-  gyro->pitch_cal /= GYRO_CALIBRATIONS;
-  gyro->yaw_cal   /= GYRO_CALIBRATIONS;
-  gyro->calibrated = true;
+  // negate due to mount position
+  gyro->yaw *= -1;
 }
 
 inline void writeGryoToEEPROM(struct Gyroscope& gyro, int location) {
-  EEPROM.put(location, gyro.acc.x_cal);
-  EEPROM.put(location += sizeof(gyro.acc.x_cal), gyro.acc.y_cal);
-  EEPROM.put(location += sizeof(gyro.acc.y_cal), gyro.acc.z_cal);
-
-  EEPROM.put(location += sizeof(gyro.acc.z_cal), gyro.roll_cal);
+  EEPROM.put(location, gyro.roll_cal);
   EEPROM.put(location += sizeof(gyro.roll_cal), gyro.pitch_cal);
   EEPROM.put(location += sizeof(gyro.pitch_cal), gyro.yaw_cal);
-
-  EEPROM.write(GYRO_CALIBRATED_LOC, 1);
+  EEPROM.put(GYRO_CALIBRATED_LOC, 1);
 }
 
 inline bool readGyroFromEEPROM(struct Gyroscope& gyro, int location) {
   if (!EEPROM.read(GYRO_CALIBRATED_LOC))
     return false;
 
-  EEPROM.get(location, gyro.acc.x_cal);
-  EEPROM.get(location += sizeof(gyro.acc.x_cal), gyro.acc.y_cal);
-  EEPROM.get(location += sizeof(gyro.acc.y_cal), gyro.acc.z_cal);
-
-  EEPROM.get(location += sizeof(gyro.acc.z_cal), gyro.roll_cal);
+  EEPROM.get(location, gyro.roll_cal);
   EEPROM.get(location += sizeof(gyro.roll_cal), gyro.pitch_cal);
   EEPROM.get(location += sizeof(gyro.pitch_cal), gyro.yaw_cal);
   gyro.calibrated = true;
-
   return true;
 }
 
