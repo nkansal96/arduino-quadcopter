@@ -21,7 +21,6 @@ double pitch_acc = 0, roll_acc = 0;
 double landing_throttle;
 
 void setup() {
-  Serial.begin(115200);
   // zero data structures
   memset(&gyro, 0, sizeof(gyro));
   memset(&rcvr, 0, sizeof(rcvr));
@@ -78,7 +77,6 @@ void setup() {
 
   // Read the battery voltage
   battery_voltage = (analogRead(BATTERY_PIN) + 65) * 1.2317;
-  Serial.println(battery_voltage);
 
   loop_timer = micros();
   digitalWrite(LED_PIN, LOW);
@@ -176,10 +174,8 @@ void loop() {
   case LANDING: {
     if (landing_throttle < 1100)
       setState(STOPPED);
-    Serial.print("throttle: ");
-    Serial.println(landing_throttle);
+    
     landing_throttle -= 0.4;
-
     calculatePID(&pid);
     calculateESCPulses(landing_throttle, &pid);  
     break;
@@ -224,8 +220,6 @@ void loop() {
 }
 
 inline void setState(State s) {
-  Serial.print("state = ");
-  Serial.println(s);
   state = s;
 }
 
