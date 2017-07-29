@@ -6,6 +6,7 @@ struct ReceiverChannel {
   volatile unsigned long time;
   volatile int pulse;
   volatile bool state;
+  volatile bool on;
 };
 
 // Receiver values
@@ -14,6 +15,7 @@ struct Receiver {
   volatile struct ReceiverChannel ch2;
   volatile struct ReceiverChannel ch3;
   volatile struct ReceiverChannel ch4;
+  volatile struct ReceiverChannel ch5;
 };
 
 extern Receiver rcvr;
@@ -52,6 +54,16 @@ ISR(PCINT0_vect) {
   } else if (rcvr.ch4.state && !(PINB & 0b1000)) {
     rcvr.ch4.state = false;
     rcvr.ch4.pulse = last_interrupt - rcvr.ch4.time;
+  }
+  // Channel 4 ==================================
+  // this is actually pin 13
+  if (!rcvr.ch5.state && (PINB & 0b100000)) {
+    rcvr.ch5.state = true;
+    rcvr.ch5.time = last_interrupt;
+  } else if (rcvr.ch5.state && !(PINB & 0b100000)) {
+    rcvr.ch5.state = false;
+    rcvr.ch5.pulse = last_interrupt - rcvr.ch5.time;
+    rcvr.ch5.on = rcvr.ch5.pulse > 1500;
   }
 }
 

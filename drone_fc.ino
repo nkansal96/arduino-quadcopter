@@ -4,7 +4,7 @@
 #include "receiver.h"
 
 // program state
-enum State { STOPPED, STARTING, STARTED };
+enum State { STOPPED, STARTING, STARTED, LANDING_INIT, LANDING };
 State state = STOPPED;
 
 int battery_voltage = 0;            // current battery voltage
@@ -18,8 +18,10 @@ struct PID pid;                     // PID settings
 int esc_fr, esc_rr, esc_rl, esc_fl; // esc outputs (0 => RF, 1 => RR, 2 => LR, 3 => RF)
 double pitch_angle, roll_angle;
 double pitch_acc = 0, roll_acc = 0;
+double landing_throttle;
 
 void setup() {
+  Serial.begin(115200);
   // zero data structures
   memset(&gyro, 0, sizeof(gyro));
   memset(&rcvr, 0, sizeof(rcvr));
@@ -41,6 +43,7 @@ void setup() {
   PCMSK0 |= (1 << PCINT1);
   PCMSK0 |= (1 << PCINT2);
   PCMSK0 |= (1 << PCINT3);
+  PCMSK0 |= (1 << PCINT5);
 
   // set the I2C clock speed to 400kHz.
   TWBR = 12;
@@ -59,7 +62,7 @@ void setup() {
   setupPID(&pid);
 
   int count = 0;
-  // wait for start signal
+  // wait for receiver signal
   while (rcvr.ch3.pulse < 990 || rcvr.ch3.pulse > 1020 || rcvr.ch4.pulse < 1400) {
     PORTD |= 0b11110000; // turn on all ESC
     delayMicroseconds(1000); // 1000 microsecond pulse
@@ -75,6 +78,7 @@ void setup() {
 
   // Read the battery voltage
   battery_voltage = (analogRead(BATTERY_PIN) + 65) * 1.2317;
+  Serial.println(battery_voltage);
 
   loop_timer = micros();
   digitalWrite(LED_PIN, LOW);
@@ -113,99 +117,86 @@ void loop() {
   double roll_adjust = roll_angle * 15.0;
   double pitch_adjust = pitch_angle * 15.0;
 
-  // based on program state, do different things
-  switch (state) {
-    case STOPPED: {
-      if (rcvr.ch3.pulse < 1050 && rcvr.ch4.pulse < 1050)
-        state = STARTING;
-      resetESCPulses();
-      break;
-    }
+  // set PID target for roll (16 micros deadband)
+  pid.roll.target = 0;
+  if (rcvr.ch1.pulse > 1508) pid.roll.target = rcvr.ch1.pulse - 1508;
+  if (rcvr.ch1.pulse < 1492) pid.roll.target = rcvr.ch1.pulse - 1492;
+  pid.roll.target -= roll_adjust;
+  pid.roll.target /= 3; // convert to degrees
 
-    case STARTING: {
-      if (rcvr.ch3.pulse < 1050 && rcvr.ch4.pulse < 1550 && rcvr.ch4.pulse > 1450) {
-        state = STARTED;
+  // set PID target for pitch (16 micros deadband)
+  pid.pitch.target = 0;
+  if (rcvr.ch2.pulse > 1508) pid.pitch.target = rcvr.ch2.pulse - 1508;
+  if (rcvr.ch2.pulse < 1492) pid.pitch.target = rcvr.ch2.pulse - 1492;
+  pid.pitch.target -= pitch_adjust;
+  pid.pitch.target /= 3; // convert to degrees
 
-        // do pre-flight setup
-        pid.yaw.i.total = 0;
-        pid.roll.i.total = 0;
-        pid.pitch.i.total = 0;
-
-        pid.yaw.d.prev = 0;
-        pid.roll.d.prev = 0;
-        pid.pitch.d.prev = 0;
-
-        roll_angle = roll_acc;
-        pitch_angle = pitch_acc;
-      }
-      resetESCPulses();
-      break;
-    }
-
-    case STARTED: {
-      if (rcvr.ch3.pulse < 1050 && rcvr.ch4.pulse > 1950)
-        state = STOPPED;
-
-      // set PID target for roll (16 micros deadband)
-      pid.roll.target = 0;
-      if (rcvr.ch1.pulse > 1508) pid.roll.target = rcvr.ch1.pulse - 1508;
-      if (rcvr.ch1.pulse < 1492) pid.roll.target = rcvr.ch1.pulse - 1492;
-      pid.roll.target -= roll_adjust;
-      pid.roll.target /= 3; // convert to degrees
-
-      // set PID target for pitch (16 micros deadband)
-      pid.pitch.target = 0;
-      if (rcvr.ch2.pulse > 1508) pid.pitch.target = rcvr.ch2.pulse - 1508;
-      if (rcvr.ch2.pulse < 1492) pid.pitch.target = rcvr.ch2.pulse - 1492;
-      pid.pitch.target -= pitch_adjust;
-      pid.pitch.target /= 3; // convert to degrees
-
-      // do not yaw when turning off the motors
-      pid.yaw.target = 0;
-      if (rcvr.ch3.pulse > 1100) {
-        // set PID target for yaw (16 micros deadband)
-        if (rcvr.ch4.pulse > 1508) pid.yaw.target = rcvr.ch4.pulse - 1508;
-        if (rcvr.ch4.pulse < 1492) pid.yaw.target = rcvr.ch4.pulse - 1492;
-        pid.yaw.target /= 3; // convert to degrees
-      }
-
-      calculatePID(&pid);
-
-      // calculate ESC pulses necessary to level
-      int throttle = min(1800, rcvr.ch3.pulse);
-      esc_fr = throttle - pid.pitch.output + pid.roll.output - pid.yaw.output;
-      esc_rr = throttle + pid.pitch.output + pid.roll.output + pid.yaw.output;
-      esc_rl = throttle + pid.pitch.output - pid.roll.output - pid.yaw.output;
-      esc_fl = throttle - pid.pitch.output - pid.roll.output + pid.yaw.output;
-
-      // compensate for battery voltage
-      if (battery_voltage < 1240 && battery_voltage > 800) {
-        float compensation = 1 + ((1240.0 - battery_voltage)/3500.0);
-        esc_fr *= compensation;
-        esc_rr *= compensation;
-        esc_rl *= compensation;
-        esc_fl *= compensation;
-      }
-
-      // limit the ESC outputs - keep them on
-      esc_fr = min(2000, max(1100, esc_fr));
-      esc_rr = min(2000, max(1100, esc_rr));
-      esc_rl = min(2000, max(1100, esc_rl));
-      esc_fl = min(2000, max(1100, esc_fl));
-
-      // check receiver inputs to make sure they didn't get disconnected
-      if (loop_timer > last_interrupt + 16000) {
-        state = STOPPED;
-        rcvr.ch1.pulse = 1500;
-        rcvr.ch2.pulse = 1500;
-        rcvr.ch3.pulse = 1000;
-        rcvr.ch4.pulse = 1500;
-        return;
-      }
-    }
+  // do not yaw when turning off the motors
+  pid.yaw.target = 0;
+  if (rcvr.ch3.pulse > 1100) {
+    // set PID target for yaw (16 micros deadband)
+    if (rcvr.ch4.pulse > 1508) pid.yaw.target = rcvr.ch4.pulse - 1508;
+    if (rcvr.ch4.pulse < 1492) pid.yaw.target = rcvr.ch4.pulse - 1492;
+    pid.yaw.target /= 3; // convert to degrees
   }
 
-    // keep loop at 4000 microseconds (250 Hz) so ESC can function properly
+  // based on program state, do different things
+  switch (state) {
+  case STOPPED: {
+    if (rcvr.ch3.pulse < 1050 && rcvr.ch5.on)
+      setState(STARTING);
+    resetESCPulses();
+    break;
+  }
+
+  case STARTING: {
+    // do pre-flight setup
+    pid.yaw.i.total = 0;
+    pid.roll.i.total = 0;
+    pid.pitch.i.total = 0;
+
+    pid.yaw.d.prev = 0;
+    pid.roll.d.prev = 0;
+    pid.pitch.d.prev = 0;
+
+    roll_angle = roll_acc;
+    pitch_angle = pitch_acc;
+    
+    setState(STARTED);
+    resetESCPulses();
+    break;
+  }
+
+  case LANDING_INIT: {
+    setState(LANDING);
+    landing_throttle = min(LANDING_THROTTLE_MAX, rcvr.ch3.pulse);
+    break;
+  }
+
+  case LANDING: {
+    if (landing_throttle < 1100)
+      setState(STOPPED);
+    Serial.print("throttle: ");
+    Serial.println(landing_throttle);
+    landing_throttle -= 0.4;
+
+    calculatePID(&pid);
+    calculateESCPulses(landing_throttle, &pid);  
+    break;
+  }
+
+  case STARTED: {
+    // check receiver inputs to make sure they didn't get disconnected
+    if (!rcvr.ch5.on || (loop_timer > last_interrupt + 16000)) 
+      setState(LANDING_INIT);
+
+    calculatePID(&pid);
+    calculateESCPulses(rcvr.ch3.pulse, &pid);    
+    break;
+  }
+  }
+
+  // keep loop at 4000 microseconds (250 Hz) so ESC can function properly
   while (micros() - loop_timer < 4000);
   loop_timer = micros();
 
@@ -232,9 +223,39 @@ void loop() {
   }
 }
 
+inline void setState(State s) {
+  Serial.print("state = ");
+  Serial.println(s);
+  state = s;
+}
+
 inline void resetESCPulses() {
   esc_fr = 1000;
   esc_rr = 1000;
   esc_rl = 1000;
   esc_fl = 1000;
+}
+
+inline void calculateESCPulses(int throttle, struct PID* pid) {
+  // calculate ESC pulses necessary to level
+  throttle = min(1800, throttle);
+  esc_fr = throttle - pid->pitch.output + pid->roll.output - pid->yaw.output;
+  esc_rr = throttle + pid->pitch.output + pid->roll.output + pid->yaw.output;
+  esc_rl = throttle + pid->pitch.output - pid->roll.output - pid->yaw.output;
+  esc_fl = throttle - pid->pitch.output - pid->roll.output + pid->yaw.output;
+
+  // compensate for battery voltage
+  if (battery_voltage < 1240 && battery_voltage > 800) {
+    float compensation = 1 + ((1240.0 - battery_voltage)/3500.0);
+    esc_fr *= compensation;
+    esc_rr *= compensation;
+    esc_rl *= compensation;
+    esc_fl *= compensation;
+  }
+
+  // limit the ESC outputs - keep them on
+  esc_fr = min(2000, max(1100, esc_fr));
+  esc_rr = min(2000, max(1100, esc_rr));
+  esc_rl = min(2000, max(1100, esc_rl));
+  esc_fl = min(2000, max(1100, esc_fl));
 }

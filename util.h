@@ -37,4 +37,6 @@ const int LOW_BATTERY_V = 1000;
 const int GYRO_CALIBRATED_LOC = 300;
 const int GYRO_STRUCT_LOC = 301;
 
+const int LANDING_THROTTLE_MAX = 1600;
+
 #endif
