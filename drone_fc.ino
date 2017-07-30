@@ -83,9 +83,7 @@ void setup() {
 }
 
 void loop() {
-  // regardless of state, calculate current orientation
   // calculate current orientation according to the gyro
-
   // use a 70-30 complementary filter
   // 65.5 is from the MPU-6050 spec
   pid.yaw.gyro = (pid.yaw.gyro * 0.7) + ((gyro.yaw / 65.5) * 0.3);
@@ -185,6 +183,9 @@ void loop() {
     // check receiver inputs to make sure they didn't get disconnected
     if (!rcvr.ch5.on || (loop_timer > last_interrupt + 16000)) 
       setState(LANDING_INIT);
+    // fallback stop mode, in case the landing switch doesn't work
+    if (rcvr.ch3.pulse < 1050 && rcvr.ch4.pulse > 1950)
+      setState(STOPPED);
 
     calculatePID(&pid);
     calculateESCPulses(rcvr.ch3.pulse, &pid);    
