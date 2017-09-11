@@ -110,8 +110,8 @@ void loop() {
   roll_angle = (roll_angle * 0.9996) + (roll_acc * 0.0004);
   pitch_angle = (pitch_angle * 0.9996) + (pitch_acc * 0.0004);
 
-  double roll_adjust = roll_angle * 15.0;
-  double pitch_adjust = pitch_angle * 15.0;
+  double roll_adjust = roll_angle * 17.0;
+  double pitch_adjust = pitch_angle * 17.0;
 
   // set PID target for roll (16 micros deadband)
   pid.roll.target = 0;
@@ -183,9 +183,6 @@ void loop() {
     // check receiver inputs to make sure they didn't get disconnected
     if (!rcvr.ch5.on || (loop_timer > last_interrupt + 16000)) 
       setState(LANDING_INIT);
-    // fallback stop mode, in case the landing switch doesn't work
-    if (rcvr.ch3.pulse < 1050 && rcvr.ch4.pulse > 1950)
-      setState(STOPPED);
 
     calculatePID(&pid);
     calculateESCPulses(rcvr.ch3.pulse, &pid);    
